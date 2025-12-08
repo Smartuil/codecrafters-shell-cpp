@@ -4,11 +4,10 @@
 #include <cstdlib>
 #include <sstream>
 #include <vector>
-#include <cstring>     // ADD THIS ✔
+#include <cstring>     // strdup
 #include <unistd.h>    // fork(), execv(), access(), X_OK
 #include <sys/wait.h>  // waitpid()
 
-// Cross-platform compatibility for access() and X_OK
 #ifdef _WIN32
 #include <io.h>
 #define access _access
@@ -16,6 +15,12 @@
 #else
 #include <unistd.h>
 #endif
+
+struct ArgToken
+{
+	std::string value;
+	bool singleQuoted;
+};
 
 std::string decodeEchoEscapes(const std::string& input)
 {
@@ -30,26 +35,11 @@ std::string decodeEchoEscapes(const std::string& input)
 		{
 			switch (c)
 			{
-			case 'n':
-				result += 'n';
-				break;
-
-			case 't':
-				result += 't';
-				break;
-
-			case 'r':
-				result += 'r';
-				break;
-
-			case '\\':
-				result += '\\';
-				break;
-
-			case '"':
-				result += '"';
-				break;
-
+			case 'n': result += 'n'; break;
+			case 't': result += 't'; break;
+			case 'r': result += 'r'; break;
+			case '\\': result += '\\'; break;
+			case '"': result += '"'; break;
 			default:
 				if (c >= '0' && c <= '7')
 				{
@@ -66,10 +56,7 @@ std::string decodeEchoEscapes(const std::string& input)
 							j++;
 							digitCount++;
 						}
-						else
-						{
-							break;
-						}
+						else break;
 					}
 
 					result += static_cast<char>(octalValue);
@@ -80,10 +67,8 @@ std::string decodeEchoEscapes(const std::string& input)
 					result += '\\';
 					result += c;
 				}
-
 				break;
 			}
-
 			escapeNext = false;
 		}
 		else if (c == '\\')
@@ -104,13 +89,14 @@ std::string decodeEchoEscapes(const std::string& input)
 	return result;
 }
 
-std::vector<std::string> parseCommand(const std::string & command)
+std::vector<ArgToken> parseCommand(const std::string& command)
 {
-	std::vector<std::string> args;
+	std::vector<ArgToken> args;
 	std::string currentArg;
 	bool inSingleQuotes = false;
 	bool inDoubleQuotes = false;
 	bool escapeNext = false;
+	bool argSingleQuoted = false;
 
 	for (size_t i = 0; i < command.length(); ++i)
 	{
@@ -118,39 +104,12 @@ std::vector<std::string> parseCommand(const std::string & command)
 
 		if (escapeNext)
 		{
-			// shell 行为：单引号内无任何转义
 			if (!inSingleQuotes)
 			{
-				if (inDoubleQuotes)
-				{
-					// 双引号中仅 \" \\ \$ \` 有效
-					if (c == '"' || c == '\\' || c == '$' || c == '`')
-					{
-						currentArg += c;
-					}
-					else
-					{
-						currentArg += '\\';
-						currentArg += c;
-					}
-				}
-				else
-				{
-					// 引号外仅空格 tab ' " \ 可被转义
-					if (c == ' ' || c == '\t' || c == '\'' || c == '"' || c == '\\')
-					{
-						currentArg += c;
-					}
-					else
-					{
-						currentArg += '\\';
-						currentArg += c;
-					}
-				}
+				currentArg += c;
 			}
 			else
 			{
-				// 单引号内转义无效
 				currentArg += '\\';
 				currentArg += c;
 			}
@@ -159,34 +118,32 @@ std::vector<std::string> parseCommand(const std::string & command)
 			continue;
 		}
 
-		// 反斜杠触发转义（单引号内无效）
 		if (c == '\\' && !inSingleQuotes)
 		{
 			escapeNext = true;
 			continue;
 		}
 
-		// 单引号切换（仅在不在双引号时）
 		if (c == '\'' && !inDoubleQuotes)
 		{
 			inSingleQuotes = !inSingleQuotes;
+			if (inSingleQuotes) argSingleQuoted = true;
 			continue;
 		}
 
-		// 双引号切换（仅在不在单引号时）
 		if (c == '"' && !inSingleQuotes)
 		{
 			inDoubleQuotes = !inDoubleQuotes;
 			continue;
 		}
 
-		// 空白分隔（仅在非引号状态）
 		if (!inSingleQuotes && !inDoubleQuotes && (c == ' ' || c == '\t'))
 		{
 			if (!currentArg.empty())
 			{
-				args.push_back(currentArg);
+				args.push_back({ currentArg, argSingleQuoted });
 				currentArg.clear();
+				argSingleQuoted = false;
 			}
 			continue;
 		}
@@ -194,7 +151,6 @@ std::vector<std::string> parseCommand(const std::string & command)
 		currentArg += c;
 	}
 
-	// 结尾如果有 pending escape → literal '\'
 	if (escapeNext)
 	{
 		currentArg += '\\';
@@ -202,55 +158,45 @@ std::vector<std::string> parseCommand(const std::string & command)
 
 	if (!currentArg.empty())
 	{
-		args.push_back(currentArg);
+		args.push_back({ currentArg, argSingleQuoted });
 	}
 
 	return args;
 }
 
-int main() 
+int main()
 {
-	// Flush after every std::cout / std:cerr
 	std::cout << std::unitbuf;
 	std::cerr << std::unitbuf;
-
-	std::string pathString = getenv("PATH");
-
-	std::string currentPath;
-	std::string fullPath;
-	char sep = std::filesystem::path::preferred_separator;
-	bool foundPath = false;
 
 	while (true)
 	{
 		std::cout << "$ ";
-
 		std::string command;
 		std::getline(std::cin, command);
 
-		if (command == "exit")
-		{
-			break;
-		}
+		if (command == "exit") break;
 
 		if (command.substr(0, 4) == "echo")
 		{
-			std::vector<std::string> args = parseCommand(command);
-			if (args.size() > 1)
+			std::vector<ArgToken> args = parseCommand(command);
+			for (size_t i = 1; i < args.size(); ++i)
 			{
-				for (size_t i = 1; i < args.size(); ++i)
+				if (i > 1)
 				{
-					if (i > 1)
-					{
-						std::cout << " ";
-					}
+					std::cout << " ";
+				}
 
-					std::cout << decodeEchoEscapes(args[i]);
+				if (args[i].singleQuoted)
+				{
+					std::cout << args[i].value;
+				}
+				else
+				{
+					std::cout << decodeEchoEscapes(args[i].value);
 				}
 			}
-
 			std::cout << std::endl;
-
 			continue;
 		}
 
@@ -261,27 +207,23 @@ int main()
 			if (target == "echo" || target == "exit" || target == "type")
 			{
 				std::cout << target << " is a shell builtin" << std::endl;
-
 				continue;
 			}
-			
-			// Search in PATH
-			char* pathEnv = std::getenv("PATH");
 
-			if (pathEnv != nullptr) 
+			char* pathEnv = std::getenv("PATH");
+			bool found = false;
+			if (pathEnv != nullptr)
 			{
 				std::string path(pathEnv);
 				size_t start = 0;
-				bool found = false;
-
-				while (true) 
+				while (true)
 				{
 					size_t end = path.find(
-	#ifdef _WIN32
+#ifdef _WIN32
 						';'
-	#else
+#else
 						':'
-	#endif
+#endif
 						, start);
 
 					std::string dir = (end == std::string::npos)
@@ -290,16 +232,13 @@ int main()
 
 					if (!dir.empty())
 					{
-						// Build full path
 						std::string fullPath =
-	#ifdef _WIN32
+#ifdef _WIN32
 							dir + "\\" + target;
-	#else
+#else
 							dir + "/" + target;
-	#endif
-
-						// Check executable permission
-						if (access(fullPath.c_str(), X_OK) == 0) 
+#endif
+						if (access(fullPath.c_str(), X_OK) == 0)
 						{
 							std::cout << target << " is " << fullPath << std::endl;
 							found = true;
@@ -307,36 +246,28 @@ int main()
 						}
 					}
 
-					if (end == std::string::npos) 
-					{
-						break;
-					}
-
+					if (end == std::string::npos) break;
 					start = end + 1;
 				}
-
-				if (!found) 
-				{
-					std::cout << target << ": not found" << std::endl;
-				}
 			}
-			else 
+			if (!found)
 			{
 				std::cout << target << ": not found" << std::endl;
-
 			}
 
 			continue;
 		}
 
-		// ---------- external command execution ----------
-		std::vector<std::string> parsedArgs = parseCommand(command);
-		if (parsedArgs.empty()) continue;
-		
+		std::vector<ArgToken> parsedArgs = parseCommand(command);
+		if (parsedArgs.empty())
+		{
+			continue;
+		}
+
 		std::vector<char*> args;
 		for (const auto& arg : parsedArgs)
 		{
-			args.push_back(strdup(arg.c_str()));
+			args.push_back(strdup(arg.value.c_str()));
 		}
 		args.push_back(nullptr);
 
@@ -348,40 +279,33 @@ int main()
 		{
 			std::string path(pathEnv);
 			size_t start = 0;
-
-			while (true) 
+			while (true)
 			{
 				size_t end = path.find(':', start);
 				std::string dir = (end == std::string::npos)
 					? path.substr(start)
 					: path.substr(start, end - start);
 
-				if (!dir.empty()) 
+				if (!dir.empty())
 				{
 					std::string fullPath = dir + "/" + cmd;
 
-					if (access(fullPath.c_str(), X_OK) == 0) 
+					if (access(fullPath.c_str(), X_OK) == 0)
 					{
 						pid_t pid = fork();
-
-						if (pid == 0) 
-						{ 
-							// child
+						if (pid == 0)
+						{
 							execv(fullPath.c_str(), args.data());
 							exit(1);
 						}
-						else 
-						{ 
-							// parent
+						else
+						{
 							waitpid(pid, nullptr, 0);
 						}
-
 						executed = true;
-
 						break;
 					}
 				}
-
 				if (end == std::string::npos)
 				{
 					break;
@@ -391,17 +315,19 @@ int main()
 			}
 		}
 
-		if (!executed) 
+		if (!executed)
 		{
 			std::cout << cmd << ": command not found" << std::endl;
 		}
 
-		for (char* ptr : args) 
+		for (char* ptr : args)
 		{
-			if (ptr)
+			if
 			{ 
-				free(ptr);
+				(ptr)
 			}
+			
+			free(ptr);
 		}
 	}
 
