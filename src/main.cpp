@@ -17,22 +17,27 @@
 #include <unistd.h>
 #endif
 
-// Parse command with single quote support
+// Parse command with single and double quote support
 std::vector<std::string> parseCommand(const std::string& command) 
 {
     std::vector<std::string> args;
     std::string currentArg;
-    bool inQuotes = false;
+    bool inSingleQuotes = false;
+    bool inDoubleQuotes = false;
     
     for (size_t i = 0; i < command.length(); ++i)
 	{
         char c = command[i];
         
-        if (c == '\'') 
+        if (c == '\'' && !inDoubleQuotes) 
 		{
-            inQuotes = !inQuotes;
+            inSingleQuotes = !inSingleQuotes;
         } 
-		else if (c == ' ' && !inQuotes)
+		else if (c == '"' && !inSingleQuotes)
+		{
+            inDoubleQuotes = !inDoubleQuotes;
+        }
+		else if ((c == ' ' || c == '\t') && !inSingleQuotes && !inDoubleQuotes)
 		{
             if (!currentArg.empty()) 
 			{
