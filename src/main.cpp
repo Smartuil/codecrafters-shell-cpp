@@ -322,12 +322,10 @@ int main()
 
 		for (char* ptr : args)
 		{
-			if
+			if (ptr)
 			{ 
-				(ptr)
+				free(ptr);
 			}
-			
-			free(ptr);
 		}
 	}
 
