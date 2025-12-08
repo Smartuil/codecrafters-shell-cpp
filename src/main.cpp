@@ -32,8 +32,69 @@ std::vector<std::string> parseCommand(const std::string& command)
         
         if (escapeNext) 
 		{
-            // Add the escaped character literally
-            currentArg += c;
+            // Handle escape sequences in double quotes
+            if (inDoubleQuotes) 
+			{
+                switch (c) 
+				{
+                    case 'n':
+                        currentArg += '\n';
+                        break;
+                    case 't':
+                        currentArg += '\t';
+                        break;
+                    case 'r':
+                        currentArg += '\r';
+                        break;
+                    case '\\':
+                        currentArg += '\\';
+                        break;
+                    case '"':
+                        currentArg += '"';
+                        break;
+                    case '\'':
+                        currentArg += '\'';
+                        break;
+                    default:
+                        // For octal sequences (e.g., \67)
+                        if (c >= '0' && c <= '7')
+						{
+                            // Parse up to 3 octal digits
+                            int octalValue = c - '0';
+                            size_t j = i + 1;
+                            int digitCount = 1;
+                            
+                            while (j < command.length() && digitCount < 3) 
+							{
+                                char nextChar = command[j];
+                                if (nextChar >= '0' && nextChar <= '7')
+								{
+                                    octalValue = octalValue * 8 + (nextChar - '0');
+                                    j++;
+                                    digitCount++;
+                                } 
+								else
+								{
+                                    break;
+                                }
+                            }
+                            
+                            currentArg += static_cast<char>(octalValue);
+                            i = j - 1; // Adjust index to skip consumed digits
+                        } 
+						else 
+						{
+                            // Unknown escape, treat literally
+                            currentArg += c;
+                        }
+                        break;
+                }
+            } 
+			else
+			{
+                // Outside quotes, add escaped character literally
+                currentArg += c;
+            }
             escapeNext = false;
         }
         else if (c == '\\' && !inSingleQuotes && !inDoubleQuotes)
