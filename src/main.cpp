@@ -1,4 +1,4 @@
-﻿#include <iostream>
+#include <iostream>
 #include <string>
 #include <filesystem>
 #include <cstdlib>
@@ -17,130 +17,108 @@
 #include <unistd.h>
 #endif
 
-// Parse command with single, double quote and backslash escape support
-std::vector<std::string> parseCommand(const std::string& command) 
+std::vector<std::string> parseCommand(const std::string & command)
 {
-    std::vector<std::string> args;
-    std::string currentArg;
-    bool inSingleQuotes = false;
-    bool inDoubleQuotes = false;
-    bool escapeNext = false;
-    
-    for (size_t i = 0; i < command.length(); ++i)
+	std::vector<std::string> args;
+	std::string currentArg;
+	bool inSingleQuotes = false;
+	bool inDoubleQuotes = false;
+	bool escapeNext = false;
+
+	for (size_t i = 0; i < command.length(); ++i)
 	{
-        char c = command[i];
-        
-        if (escapeNext) 
+		char c = command[i];
+
+		if (escapeNext)
 		{
-            // Handle escape sequences in double quotes
-            if (inDoubleQuotes) 
+			// shell 行为：单引号内无任何转义
+			if (!inSingleQuotes)
 			{
-                switch (c) 
+				if (inDoubleQuotes)
 				{
-                    case 'n':
-                        currentArg += '\n';
-                        break;
-                    case 't':
-                        currentArg += '\t';
-                        break;
-                    case 'r':
-                        currentArg += '\r';
-                        break;
-                    case '\\':
-                        currentArg += '\\';
-                        break;
-                    case '"':
-                        currentArg += '"';
-                        break;
-                    case '\'':
-                        currentArg += '\'';
-                        break;
-                    default:
-                        // For octal sequences (e.g., \67)
-                        if (c >= '0' && c <= '7')
-						{
-                            // Parse up to 3 octal digits
-                            int octalValue = c - '0';
-                            size_t j = i + 1;
-                            int digitCount = 1;
-                            
-                            while (j < command.length() && digitCount < 3) 
-							{
-                                char nextChar = command[j];
-                                if (nextChar >= '0' && nextChar <= '7')
-								{
-                                    octalValue = octalValue * 8 + (nextChar - '0');
-                                    j++;
-                                    digitCount++;
-                                } 
-								else
-								{
-                                    break;
-                                }
-                            }
-                            
-                            currentArg += static_cast<char>(octalValue);
-                            i = j - 1; // Adjust index to skip consumed digits
-                        } 
-						else 
-						{
-                            // Unknown escape, treat literally
-                            currentArg += c;
-                        }
-                        break;
-                }
-            } 
+					// 双引号中仅 \" \\ \$ \` 有效
+					if (c == '"' || c == '\\' || c == '$' || c == '`')
+					{
+						currentArg += c;
+					}
+					else
+					{
+						currentArg += '\\';
+						currentArg += c;
+					}
+				}
+				else
+				{
+					// 引号外仅空格 tab ' " \ 可被转义
+					if (c == ' ' || c == '\t' || c == '\'' || c == '"' || c == '\\')
+					{
+						currentArg += c;
+					}
+					else
+					{
+						currentArg += '\\';
+						currentArg += c;
+					}
+				}
+			}
 			else
 			{
-                // Outside quotes, add escaped character literally
-                currentArg += c;
-            }
-            escapeNext = false;
-        }
-        else if (c == '\\' && !inSingleQuotes && !inDoubleQuotes)
+				// 单引号内转义无效
+				currentArg += '\\';
+				currentArg += c;
+			}
+
+			escapeNext = false;
+			continue;
+		}
+
+		// 反斜杠触发转义（单引号内无效）
+		if (c == '\\' && !inSingleQuotes)
 		{
-            // Backslash outside quotes - escape next character
-            escapeNext = true;
-        }
-        else if (c == '\\' && !inSingleQuotes && inDoubleQuotes) 
+			escapeNext = true;
+			continue;
+		}
+
+		// 单引号切换（仅在不在双引号时）
+		if (c == '\'' && !inDoubleQuotes)
 		{
-            // Backslash inside double quotes - escape next character
-            escapeNext = true;
-        }
-        else if (c == '\'' && !inDoubleQuotes && !escapeNext) 
+			inSingleQuotes = !inSingleQuotes;
+			continue;
+		}
+
+		// 双引号切换（仅在不在单引号时）
+		if (c == '"' && !inSingleQuotes)
 		{
-            inSingleQuotes = !inSingleQuotes;
-        } 
-		else if (c == '"' && !inSingleQuotes && !escapeNext)
+			inDoubleQuotes = !inDoubleQuotes;
+			continue;
+		}
+
+		// 空白分隔（仅在非引号状态）
+		if (!inSingleQuotes && !inDoubleQuotes && (c == ' ' || c == '\t'))
 		{
-            inDoubleQuotes = !inDoubleQuotes;
-        }
-		else if ((c == ' ' || c == '\t') && !inSingleQuotes && !inDoubleQuotes && !escapeNext)
-		{
-            if (!currentArg.empty()) 
+			if (!currentArg.empty())
 			{
-                args.push_back(currentArg);
-                currentArg.clear();
-            }
-        } 
-		else
-		{
-            currentArg += c;
-        }
-    }
-    
-    // Handle pending escape at end of command
-    if (escapeNext)
+				args.push_back(currentArg);
+				currentArg.clear();
+			}
+			continue;
+		}
+
+		currentArg += c;
+	}
+
+	// 结尾如果有 pending escape → literal '\'
+	if (escapeNext)
 	{
-        currentArg += '\\';
-    }
-    
-    if (!currentArg.empty())
+		currentArg += '\\';
+	}
+
+	if (!currentArg.empty())
 	{
-        args.push_back(currentArg);
-    }
-    
-    return args;
+		args.push_back(currentArg);
+	}
+
+	return args;
 }
 
 int main() 
