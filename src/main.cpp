@@ -17,6 +17,96 @@
 #include <unistd.h>
 #endif
 
+std::string decodeEchoEscapes(const std::string& input)
+{
+	std::string result;
+	bool escapeNext = false;
+
+	for (size_t i = 0; i < input.length(); ++i)
+	{
+		char c = input[i];
+
+		if (escapeNext)
+		{
+			switch (c)
+			{
+			case 'n':
+				result += '\n';
+				break;
+
+			case 't':
+				result += '\t';
+				break;
+
+			case 'r':
+				result += '\r';
+				break;
+
+			case '\\':
+				result += '\\';
+				break;
+
+			case '"':
+				result += '"';
+				break;
+
+			default:
+				// 八进制转义：\123
+				if (c >= '0' && c <= '7')
+				{
+					int octalValue = c - '0';
+					size_t j = i + 1;
+					int digitCount = 1;
+
+					while (j < input.length() && digitCount < 3)
+					{
+						char nextChar = input[j];
+						if (nextChar >= '0' && nextChar <= '7')
+						{
+							octalValue = octalValue * 8 + (nextChar - '0');
+							j++;
+							digitCount++;
+						}
+						else
+						{
+							break;
+						}
+					}
+
+					result += static_cast<char>(octalValue);
+					i = j - 1;
+				}
+				else
+				{
+					// 未知转义：原样输出
+					result += '\\';
+					result += c;
+				}
+
+				break;
+			}
+
+			escapeNext = false;
+		}
+		else if (c == '\\')
+		{
+			escapeNext = true;
+		}
+		else
+		{
+			result += c;
+		}
+	}
+
+	// 结尾有反斜杠：按字面输出 '\'
+	if (escapeNext)
+	{
+		result += '\\';
+	}
+
+	return result;
+}
+
 std::vector<std::string> parseCommand(const std::string & command)
 {
 	std::vector<std::string> args;
@@ -149,19 +239,21 @@ int main()
 		if (command.substr(0, 4) == "echo")
 		{
 			std::vector<std::string> args = parseCommand(command);
-			if (args.size() > 1) 
+			if (args.size() > 1)
 			{
-				for (size_t i = 1; i < args.size(); ++i) 
+				for (size_t i = 1; i < args.size(); ++i)
 				{
 					if (i > 1)
 					{
 						std::cout << " ";
 					}
 
-					std::cout << args[i];
+					std::cout << decodeEchoEscapes(args[i]);
 				}
 			}
+
 			std::cout << std::endl;
+
 			continue;
 		}
 
