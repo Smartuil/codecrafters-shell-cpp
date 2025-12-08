@@ -104,12 +104,39 @@ std::vector<ArgToken> parseCommand(const std::string& command)
 
 		if (escapeNext)
 		{
+			// shell 行为：单引号内无任何转义
 			if (!inSingleQuotes)
 			{
-				currentArg += c;
+				if (inDoubleQuotes)
+				{
+					// 双引号中仅 \" \\ \$ \` 有效
+					if (c == '"' || c == '\\' || c == '$' || c == '`')
+					{
+						currentArg += c;
+					}
+					else
+					{
+						currentArg += '\\';
+						currentArg += c;
+					}
+				}
+				else
+				{
+					// 引号外仅空格 tab ' " \ 可被转义
+					if (c == ' ' || c == '\t' || c == '\'' || c == '"' || c == '\\')
+					{
+						currentArg += c;
+					}
+					else
+					{
+						currentArg += '\\';
+						currentArg += c;
+					}
+				}
 			}
 			else
 			{
+				// 单引号内转义无效
 				currentArg += '\\';
 				currentArg += c;
 			}
