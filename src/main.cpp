@@ -17,7 +17,45 @@
 #include <unistd.h>
 #endif
 
-int main() {
+// Parse command with single quote support
+std::vector<std::string> parseCommand(const std::string& command) 
+{
+    std::vector<std::string> args;
+    std::string currentArg;
+    bool inQuotes = false;
+    
+    for (size_t i = 0; i < command.length(); ++i)
+	{
+        char c = command[i];
+        
+        if (c == '\'') 
+		{
+            inQuotes = !inQuotes;
+        } 
+		else if (c == ' ' && !inQuotes)
+		{
+            if (!currentArg.empty()) 
+			{
+                args.push_back(currentArg);
+                currentArg.clear();
+            }
+        } 
+		else
+		{
+            currentArg += c;
+        }
+    }
+    
+    if (!currentArg.empty())
+	{
+        args.push_back(currentArg);
+    }
+    
+    return args;
+}
+
+int main() 
+{
 	// Flush after every std::cout / std:cerr
 	std::cout << std::unitbuf;
 	std::cerr << std::unitbuf;
@@ -43,7 +81,20 @@ int main() {
 
 		if (command.substr(0, 4) == "echo")
 		{
-			std::cout << command.substr(5) << std::endl;
+			std::vector<std::string> args = parseCommand(command);
+			if (args.size() > 1) 
+			{
+				for (size_t i = 1; i < args.size(); ++i) 
+				{
+					if (i > 1)
+					{
+						std::cout << " ";
+					}
+
+					std::cout << args[i];
+				}
+			}
+			std::cout << std::endl;
 			continue;
 		}
 
@@ -123,13 +174,13 @@ int main() {
 		}
 
 		// ---------- external command execution ----------
-		std::istringstream iss(command);
+		std::vector<std::string> parsedArgs = parseCommand(command);
+		if (parsedArgs.empty()) continue;
+		
 		std::vector<char*> args;
-		std::string token;
-
-		while (iss >> token) 
+		for (const auto& arg : parsedArgs)
 		{
-			args.push_back(strdup(token.c_str()));
+			args.push_back(strdup(arg.c_str()));
 		}
 		args.push_back(nullptr);
 
