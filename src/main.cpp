@@ -31,15 +31,15 @@ std::string decodeEchoEscapes(const std::string& input)
 			switch (c)
 			{
 			case 'n':
-				result += '\n';
+				result += 'n';
 				break;
 
 			case 't':
-				result += '\t';
+				result += 't';
 				break;
 
 			case 'r':
-				result += '\r';
+				result += 'r';
 				break;
 
 			case '\\':
@@ -51,7 +51,6 @@ std::string decodeEchoEscapes(const std::string& input)
 				break;
 
 			default:
-				// 八进制转义：\123
 				if (c >= '0' && c <= '7')
 				{
 					int octalValue = c - '0';
@@ -78,7 +77,6 @@ std::string decodeEchoEscapes(const std::string& input)
 				}
 				else
 				{
-					// 未知转义：原样输出
 					result += '\\';
 					result += c;
 				}
@@ -98,7 +96,6 @@ std::string decodeEchoEscapes(const std::string& input)
 		}
 	}
 
-	// 结尾有反斜杠：按字面输出 '\'
 	if (escapeNext)
 	{
 		result += '\\';
