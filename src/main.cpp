@@ -1,4 +1,4 @@
-#include <iostream>
+﻿#include <iostream>
 #include <string>
 #include <filesystem>
 #include <cstdlib>
@@ -7,6 +7,7 @@
 #include <cstring>     // strdup
 #include <unistd.h>    // fork(), execv(), access(), X_OK
 #include <sys/wait.h>  // waitpid()
+#include <fcntl.h>     // open() - 新增用于文件操作
 
 #ifdef _WIN32
 #include <io.h>
@@ -20,6 +21,13 @@ struct ArgToken
 {
 	std::string value;
 	bool singleQuoted;
+};
+
+struct CommandInfo
+{
+	std::vector<ArgToken> args{};
+	std::string outputFile;
+	bool hasOutputRedirect{};
 };
 
 std::string decodeEchoEscapes(const std::string& input)
@@ -89,14 +97,18 @@ std::string decodeEchoEscapes(const std::string& input)
 	return result;
 }
 
-std::vector<ArgToken> parseCommand(const std::string& command)
+CommandInfo parseCommand(const std::string& command)
 {
+	CommandInfo cmdInfo;
+	cmdInfo.hasOutputRedirect = false;
+
 	std::vector<ArgToken> args;
 	std::string currentArg;
 	bool inSingleQuotes = false;
 	bool inDoubleQuotes = false;
 	bool escapeNext = false;
 	bool argSingleQuoted = false;
+	bool foundRedirect = false;
 
 	for (size_t i = 0; i < command.length(); ++i)
 	{
@@ -104,12 +116,12 @@ std::vector<ArgToken> parseCommand(const std::string& command)
 
 		if (escapeNext)
 		{
-			// shell ��Ϊ�������������κ�ת��
+			// shell 认为转义字符可以转义任何字符
 			if (!inSingleQuotes)
 			{
 				if (inDoubleQuotes)
 				{
-					// ˫�����н� \" \\ \$ \` ��Ч
+					// 双引号中仅 \" \\ \$ \` 有效
 					if (c == '"' || c == '\\' || c == '$' || c == '`')
 					{
 						currentArg += c;
@@ -122,7 +134,7 @@ std::vector<ArgToken> parseCommand(const std::string& command)
 				}
 				else
 				{
-					// ��������ո� tab ' " \ �ɱ�ת��
+					// 无引号时空格 tab ' " \ 可被转义
 					if (c == ' ' || c == '\t' || c == '\'' || c == '"' || c == '\\')
 					{
 						currentArg += c;
@@ -136,7 +148,7 @@ std::vector<ArgToken> parseCommand(const std::string& command)
 			}
 			else
 			{
-				// ��������ת����Ч
+				// 单引号中转义无效
 				currentArg += '\\';
 				currentArg += c;
 			}
@@ -164,13 +176,48 @@ std::vector<ArgToken> parseCommand(const std::string& command)
 			continue;
 		}
 
+		// 检查重定向操作符（不在引号内）
+		if (!inSingleQuotes && !inDoubleQuotes && !foundRedirect)
+		{
+			if (c == '>' && (i + 1 < command.length() && command[i + 1] != '>'))
+			{
+				// 找到 > 重定向操作符
+				if (!currentArg.empty())
+				{
+					args.push_back({ currentArg, argSingleQuoted });
+					currentArg.clear();
+					argSingleQuoted = false;
+				}
+
+				foundRedirect = true;
+				cmdInfo.hasOutputRedirect = true;
+
+				// 跳过 > 字符
+				continue;
+			}
+		}
+
 		if (!inSingleQuotes && !inDoubleQuotes && (c == ' ' || c == '\t'))
 		{
 			if (!currentArg.empty())
 			{
-				args.push_back({ currentArg, argSingleQuoted });
-				currentArg.clear();
-				argSingleQuoted = false;
+				if (foundRedirect)
+				{
+					// 重定向操作符后的空格分隔文件名
+					if (!cmdInfo.outputFile.empty())
+					{
+						// 文件名中不应有空格，如果已经有文件名则忽略后续内容
+						break;
+					}
+					cmdInfo.outputFile = currentArg;
+					currentArg.clear();
+				}
+				else
+				{
+					args.push_back({ currentArg, argSingleQuoted });
+					currentArg.clear();
+					argSingleQuoted = false;
+				}
 			}
 			continue;
 		}
@@ -185,10 +232,18 @@ std::vector<ArgToken> parseCommand(const std::string& command)
 
 	if (!currentArg.empty())
 	{
-		args.push_back({ currentArg, argSingleQuoted });
+		if (foundRedirect)
+		{
+			cmdInfo.outputFile = currentArg;
+		}
+		else
+		{
+			args.push_back({ currentArg, argSingleQuoted });
+		}
 	}
 
-	return args;
+	cmdInfo.args = args;
+	return cmdInfo;
 }
 
 int main()
@@ -204,32 +259,71 @@ int main()
 
 		if (command == "exit") break;
 
-		if (command.substr(0, 4) == "echo")
-		{
-			std::vector<ArgToken> args = parseCommand(command);
-			for (size_t i = 1; i < args.size(); ++i)
-			{
-				if (i > 1)
-				{
-					std::cout << " ";
-				}
+		CommandInfo cmdInfo = parseCommand(command);
 
-				if (args[i].singleQuoted)
-				{
-					std::cout << args[i].value;
-				}
-				else
-				{
-					std::cout << decodeEchoEscapes(args[i].value);
-				}
-			}
-			std::cout << std::endl;
+		if (cmdInfo.args.empty())
+		{
 			continue;
 		}
 
-		if (command.substr(0, 5) == "type ")
+		// 处理echo命令
+		if (cmdInfo.args[0].value == "echo")
 		{
-			std::string target = command.substr(5);
+			// 如果有重定向，打开输出文件
+			int outputFd = STDOUT_FILENO;
+			bool shouldCloseFile = false;
+
+			if (cmdInfo.hasOutputRedirect && !cmdInfo.outputFile.empty())
+			{
+				outputFd = open(cmdInfo.outputFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+				if (outputFd == -1)
+				{
+					std::cerr << "Error: cannot open file " << cmdInfo.outputFile << std::endl;
+					continue;
+				}
+				shouldCloseFile = true;
+			}
+
+			for (size_t i = 1; i < cmdInfo.args.size(); ++i)
+			{
+				if (i > 1)
+				{
+					write(outputFd, " ", 1);
+				}
+
+				std::string outputText;
+				if (cmdInfo.args[i].singleQuoted)
+				{
+					outputText = cmdInfo.args[i].value;
+				}
+				else
+				{
+					outputText = decodeEchoEscapes(cmdInfo.args[i].value);
+				}
+
+				write(outputFd, outputText.c_str(), outputText.length());
+			}
+
+			write(outputFd, "\n", 1);
+
+			if (shouldCloseFile)
+			{
+				close(outputFd);
+			}
+
+			continue;
+		}
+
+		// 处理type命令
+		if (cmdInfo.args[0].value == "type")
+		{
+			if (cmdInfo.args.size() < 2)
+			{
+				std::cout << "type: missing argument" << std::endl;
+				continue;
+			}
+
+			std::string target = cmdInfo.args[1].value;
 
 			if (target == "echo" || target == "exit" || target == "type")
 			{
@@ -285,14 +379,9 @@ int main()
 			continue;
 		}
 
-		std::vector<ArgToken> parsedArgs = parseCommand(command);
-		if (parsedArgs.empty())
-		{
-			continue;
-		}
-
+		// 处理外部命令
 		std::vector<char*> args;
-		for (const auto& arg : parsedArgs)
+		for (const auto& arg : cmdInfo.args)
 		{
 			args.push_back(strdup(arg.value.c_str()));
 		}
@@ -322,6 +411,18 @@ int main()
 						pid_t pid = fork();
 						if (pid == 0)
 						{
+							// 子进程：处理重定向
+							if (cmdInfo.hasOutputRedirect && !cmdInfo.outputFile.empty())
+							{
+								int fd = open(cmdInfo.outputFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+								if (fd == -1)
+								{
+									exit(1);
+								}
+								dup2(fd, STDOUT_FILENO);
+								close(fd);
+							}
+
 							execv(fullPath.c_str(), args.data());
 							exit(1);
 						}
@@ -350,7 +451,7 @@ int main()
 		for (char* ptr : args)
 		{
 			if (ptr)
-			{ 
+			{
 				free(ptr);
 			}
 		}
