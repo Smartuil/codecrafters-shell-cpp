@@ -341,6 +341,19 @@ int main()
 				shouldCloseFile = true;
 			}
 
+			// 处理错误重定向：即使echo不产生stderr，也要创建文件
+			if (cmdInfo.hasErrorRedirect && !cmdInfo.errorFile.empty())
+			{
+				int errorFd = open(cmdInfo.errorFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+				if (errorFd == -1)
+				{
+					std::cerr << "Error: cannot open file " << cmdInfo.errorFile << std::endl;
+					if (shouldCloseFile) close(outputFd);
+					continue;
+				}
+				close(errorFd); // 立即关闭，因为echo不产生stderr
+			}
+
 			for (size_t i = 1; i < cmdInfo.args.size(); ++i)
 			{
 				if (i > 1)
