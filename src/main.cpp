@@ -179,7 +179,25 @@ CommandInfo parseCommand(const std::string& command)
 		// 检查重定向操作符（不在引号内）
 		if (!inSingleQuotes && !inDoubleQuotes && !foundRedirect)
 		{
-			if (c == '>' && (i + 1 < command.length() && command[i + 1] != '>'))
+			// 检查1>重定向语法
+			if (c == '1' && i + 1 < command.length() && command[i + 1] == '>')
+			{
+				// 找到1>重定向操作符
+				if (!currentArg.empty())
+				{
+					args.push_back({ currentArg, argSingleQuoted });
+					currentArg.clear();
+					argSingleQuoted = false;
+				}
+
+				foundRedirect = true;
+				cmdInfo.hasOutputRedirect = true;
+
+				// 跳过1和>两个字符
+				i++; // 跳过>
+				continue;
+			}
+			else if (c == '>' && (i + 1 < command.length() && command[i + 1] != '>'))
 			{
 				// 找到 > 重定向操作符
 				if (!currentArg.empty())
