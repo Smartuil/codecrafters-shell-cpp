@@ -30,6 +30,8 @@ struct CommandInfo
 	bool hasOutputRedirect{};
 	std::string errorFile;
 	bool hasErrorRedirect{};
+	bool appendOutput{}; // 新增：是否为追加模式
+	bool appendError{};  // 新增：错误输出是否为追加模式
 };
 
 std::string decodeEchoEscapes(const std::string& input)
@@ -104,6 +106,8 @@ CommandInfo parseCommand(const std::string& command)
 	CommandInfo cmdInfo;
 	cmdInfo.hasOutputRedirect = false;
 	cmdInfo.hasErrorRedirect = false;
+	cmdInfo.appendOutput = false; // 初始化追加标志
+	cmdInfo.appendError = false;  // 初始化错误追加标志
 
 	std::vector<ArgToken> args;
 	std::string currentArg;
@@ -183,8 +187,65 @@ CommandInfo parseCommand(const std::string& command)
 		// 检查重定向操作符（不在引号内）
 		if (!inSingleQuotes && !inDoubleQuotes && !foundRedirect && !foundErrorRedirect)
 		{
+			// 检查2>>错误追加重定向语法
+			if (c == '2' && i + 2 < command.length() && command[i + 1] == '>' && command[i + 2] == '>')
+			{
+				// 找到2>>追加重定向操作符
+				if (!currentArg.empty())
+				{
+					args.push_back({ currentArg, argSingleQuoted });
+					currentArg.clear();
+					argSingleQuoted = false;
+				}
+
+				foundErrorRedirect = true;
+				cmdInfo.hasErrorRedirect = true;
+				cmdInfo.appendError = true; // 设置为追加模式
+
+				// 跳过2和>>三个字符
+				i += 2; // 跳过>>
+				continue;
+			}
+			// 检查1>>输出追加重定向语法
+			else if (c == '1' && i + 2 < command.length() && command[i + 1] == '>' && command[i + 2] == '>')
+			{
+				// 找到1>>追加重定向操作符
+				if (!currentArg.empty())
+				{
+					args.push_back({ currentArg, argSingleQuoted });
+					currentArg.clear();
+					argSingleQuoted = false;
+				}
+
+				foundRedirect = true;
+				cmdInfo.hasOutputRedirect = true;
+				cmdInfo.appendOutput = true; // 设置为追加模式
+
+				// 跳过1和>>三个字符
+				i += 2; // 跳过>>
+				continue;
+			}
+			// 检查>>输出追加重定向语法
+			else if (c == '>' && i + 1 < command.length() && command[i + 1] == '>')
+			{
+				// 找到 >> 追加重定向操作符
+				if (!currentArg.empty())
+				{
+					args.push_back({ currentArg, argSingleQuoted });
+					currentArg.clear();
+					argSingleQuoted = false;
+				}
+
+				foundRedirect = true;
+				cmdInfo.hasOutputRedirect = true;
+				cmdInfo.appendOutput = true; // 设置为追加模式
+
+				// 跳过 >> 两个字符
+				i++; // 跳过第二个>
+				continue;
+			}
 			// 检查2>错误重定向语法
-			if (c == '2' && i + 1 < command.length() && command[i + 1] == '>')
+			else if (c == '2' && i + 1 < command.length() && command[i + 1] == '>')
 			{
 				// 找到2>重定向操作符
 				if (!currentArg.empty())
@@ -196,6 +257,7 @@ CommandInfo parseCommand(const std::string& command)
 
 				foundErrorRedirect = true;
 				cmdInfo.hasErrorRedirect = true;
+				cmdInfo.appendError = false; // 设置为覆盖模式
 
 				// 跳过2和>两个字符
 				i++; // 跳过>
@@ -214,6 +276,7 @@ CommandInfo parseCommand(const std::string& command)
 
 				foundRedirect = true;
 				cmdInfo.hasOutputRedirect = true;
+				cmdInfo.appendOutput = false; // 设置为覆盖模式
 
 				// 跳过1和>两个字符
 				i++; // 跳过>
@@ -231,6 +294,7 @@ CommandInfo parseCommand(const std::string& command)
 
 				foundRedirect = true;
 				cmdInfo.hasOutputRedirect = true;
+				cmdInfo.appendOutput = false; // 设置为覆盖模式
 
 				// 跳过 > 字符
 				continue;
@@ -332,7 +396,17 @@ int main()
 
 			if (cmdInfo.hasOutputRedirect && !cmdInfo.outputFile.empty())
 			{
-				outputFd = open(cmdInfo.outputFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+				int flags = O_WRONLY | O_CREAT;
+				if (cmdInfo.appendOutput)
+				{
+					flags |= O_APPEND; // 追加模式
+				}
+				else
+				{
+					flags |= O_TRUNC; // 覆盖模式
+				}
+				
+				outputFd = open(cmdInfo.outputFile.c_str(), flags, 0644);
 				if (outputFd == -1)
 				{
 					std::cerr << "Error: cannot open file " << cmdInfo.outputFile << std::endl;
@@ -344,7 +418,17 @@ int main()
 			// 处理错误重定向：即使echo不产生stderr，也要创建文件
 			if (cmdInfo.hasErrorRedirect && !cmdInfo.errorFile.empty())
 			{
-				int errorFd = open(cmdInfo.errorFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+				int flags = O_WRONLY | O_CREAT;
+				if (cmdInfo.appendError)
+				{
+					flags |= O_APPEND; // 追加模式
+				}
+				else
+				{
+					flags |= O_TRUNC; // 覆盖模式
+				}
+				
+				int errorFd = open(cmdInfo.errorFile.c_str(), flags, 0644);
 				if (errorFd == -1)
 				{
 					std::cerr << "Error: cannot open file " << cmdInfo.errorFile << std::endl;
@@ -484,7 +568,17 @@ int main()
 							// 子进程：处理重定向
 							if (cmdInfo.hasOutputRedirect && !cmdInfo.outputFile.empty())
 							{
-								int fd = open(cmdInfo.outputFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+								int flags = O_WRONLY | O_CREAT;
+								if (cmdInfo.appendOutput)
+								{
+									flags |= O_APPEND; // 追加模式
+								}
+								else
+								{
+									flags |= O_TRUNC; // 覆盖模式
+								}
+								
+								int fd = open(cmdInfo.outputFile.c_str(), flags, 0644);
 								if (fd == -1)
 								{
 									exit(1);
@@ -495,7 +589,17 @@ int main()
 
 							if (cmdInfo.hasErrorRedirect && !cmdInfo.errorFile.empty())
 							{
-								int fd = open(cmdInfo.errorFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+								int flags = O_WRONLY | O_CREAT;
+								if (cmdInfo.appendError)
+								{
+									flags |= O_APPEND; // 追加模式
+								}
+								else
+								{
+									flags |= O_TRUNC; // 覆盖模式
+								}
+								
+								int fd = open(cmdInfo.errorFile.c_str(), flags, 0644);
 								if (fd == -1)
 								{
 									exit(1);
