@@ -28,6 +28,8 @@ struct CommandInfo
 	std::vector<ArgToken> args{};
 	std::string outputFile;
 	bool hasOutputRedirect{};
+	std::string errorFile;
+	bool hasErrorRedirect{};
 };
 
 std::string decodeEchoEscapes(const std::string& input)
@@ -101,6 +103,7 @@ CommandInfo parseCommand(const std::string& command)
 {
 	CommandInfo cmdInfo;
 	cmdInfo.hasOutputRedirect = false;
+	cmdInfo.hasErrorRedirect = false;
 
 	std::vector<ArgToken> args;
 	std::string currentArg;
@@ -109,6 +112,7 @@ CommandInfo parseCommand(const std::string& command)
 	bool escapeNext = false;
 	bool argSingleQuoted = false;
 	bool foundRedirect = false;
+	bool foundErrorRedirect = false;
 
 	for (size_t i = 0; i < command.length(); ++i)
 	{
@@ -177,10 +181,28 @@ CommandInfo parseCommand(const std::string& command)
 		}
 
 		// 检查重定向操作符（不在引号内）
-		if (!inSingleQuotes && !inDoubleQuotes && !foundRedirect)
+		if (!inSingleQuotes && !inDoubleQuotes && !foundRedirect && !foundErrorRedirect)
 		{
+			// 检查2>错误重定向语法
+			if (c == '2' && i + 1 < command.length() && command[i + 1] == '>')
+			{
+				// 找到2>重定向操作符
+				if (!currentArg.empty())
+				{
+					args.push_back({ currentArg, argSingleQuoted });
+					currentArg.clear();
+					argSingleQuoted = false;
+				}
+
+				foundErrorRedirect = true;
+				cmdInfo.hasErrorRedirect = true;
+
+				// 跳过2和>两个字符
+				i++; // 跳过>
+				continue;
+			}
 			// 检查1>重定向语法
-			if (c == '1' && i + 1 < command.length() && command[i + 1] == '>')
+			else if (c == '1' && i + 1 < command.length() && command[i + 1] == '>')
 			{
 				// 找到1>重定向操作符
 				if (!currentArg.empty())
@@ -219,16 +241,29 @@ CommandInfo parseCommand(const std::string& command)
 		{
 			if (!currentArg.empty())
 			{
-				if (foundRedirect)
+				if (foundRedirect || foundErrorRedirect)
 				{
 					// 重定向操作符后的空格分隔文件名
-					if (!cmdInfo.outputFile.empty())
+					if (foundRedirect && !cmdInfo.outputFile.empty())
 					{
 						// 文件名中不应有空格，如果已经有文件名则忽略后续内容
 						break;
 					}
-					cmdInfo.outputFile = currentArg;
-					currentArg.clear();
+					if (foundErrorRedirect && !cmdInfo.errorFile.empty())
+					{
+						// 文件名中不应有空格，如果已经有文件名则忽略后续内容
+						break;
+					}
+					if (foundRedirect)
+					{
+						cmdInfo.outputFile = currentArg;
+						currentArg.clear();
+					}
+					else if (foundErrorRedirect)
+					{
+						cmdInfo.errorFile = currentArg;
+						currentArg.clear();
+					}
 				}
 				else
 				{
@@ -253,6 +288,10 @@ CommandInfo parseCommand(const std::string& command)
 		if (foundRedirect)
 		{
 			cmdInfo.outputFile = currentArg;
+		}
+		else if (foundErrorRedirect)
+		{
+			cmdInfo.errorFile = currentArg;
 		}
 		else
 		{
@@ -438,6 +477,17 @@ int main()
 									exit(1);
 								}
 								dup2(fd, STDOUT_FILENO);
+								close(fd);
+							}
+
+							if (cmdInfo.hasErrorRedirect && !cmdInfo.errorFile.empty())
+							{
+								int fd = open(cmdInfo.errorFile.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+								if (fd == -1)
+								{
+									exit(1);
+								}
+								dup2(fd, STDERR_FILENO);
 								close(fd);
 							}
 
