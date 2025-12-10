@@ -132,7 +132,7 @@ std::string readLineWithCompletion()
 				}
 			}
 			
-			if (matchCount == 1 && !match.empty())
+			if (matchCount > 0 && !match.empty())
 			{
 				// Clear current input and show completed command
 				// Move cursor back and clear
