@@ -9,6 +9,8 @@
 #include <sys/wait.h>  // waitpid()
 #include <fcntl.h>     // open() - 新增用于文件操作
 #include <termios.h>   // termios for raw mode
+#include <algorithm>   // sort
+#include <set>         // set for unique sorted matches
 
 #ifdef _WIN32
 #include <io.h>
@@ -45,6 +47,8 @@ std::string readLineWithCompletion()
 {
 	enableRawMode();
 	std::string input;
+	int tabCount = 0;        // 跟踪连续按 Tab 的次数
+	std::string lastInput;   // 记录上次按 Tab 时的输入
 	
 	while (true)
 	{
@@ -63,20 +67,23 @@ std::string readLineWithCompletion()
 		else if (c == '\t')
 		{
 			// Tab completion
+			// 检查输入是否改变，如果改变则重置 tabCount
+			if (input != lastInput)
+			{
+				tabCount = 0;
+				lastInput = input;
+			}
+			tabCount++;
+			
 			// Find matching builtin command or executable in PATH
-			std::string match;
-			int matchCount = 0;
+			std::set<std::string> matches; // 使用 set 自动排序和去重
 			
 			// First check builtin commands
 			for (const auto& cmd : BUILTIN_COMMANDS)
 			{
 				if (cmd.rfind(input, 0) == 0) // starts with input
 				{
-					if (match.empty() || cmd < match)
-					{
-						match = cmd;
-					}
-					matchCount++;
+					matches.insert(cmd);
 				}
 			}
 			
@@ -110,11 +117,7 @@ std::string readLineWithCompletion()
 											// Check if executable
 											if (access(entry.path().c_str(), X_OK) == 0)
 											{
-												if (match.empty() || filename < match)
-												{
-													match = filename;
-												}
-												matchCount++;
+												matches.insert(filename);
 											}
 										}
 									}
@@ -132,27 +135,52 @@ std::string readLineWithCompletion()
 				}
 			}
 			
-			if (matchCount > 0 && !match.empty())
+			if (matches.size() == 1)
 			{
-				// Clear current input and show completed command
-				// Move cursor back and clear
+				// 唯一匹配：补全并添加空格
+				std::string match = *matches.begin();
 				for (size_t i = 0; i < input.length(); i++)
 				{
-					// 假设屏幕显示 ech ，光标在 h 后面：
-
-					// ech|        # | 表示光标位置
-					// ec|h        # 第一个 \b：光标左移
-					// ec |        # 空格：覆盖 h
-					// ec|         # 第二个 \b：光标回到正确位置
 					std::cout << "\b \b";
 				}
 				input = match + " ";
 				std::cout << input;
 				std::cout.flush();
+				tabCount = 0; // 重置 tab 计数
+			}
+			else if (matches.size() > 1)
+			{
+				// 多个匹配
+				if (tabCount == 1)
+				{
+					// 第一次按 Tab：响铃
+					std::cout << '\x07';
+					std::cout.flush();
+				}
+				else if (tabCount >= 2)
+				{
+					// 第二次按 Tab：显示所有匹配项
+					std::cout << std::endl;
+					bool first = true;
+					for (const auto& m : matches)
+					{
+						if (!first)
+						{
+							std::cout << "  "; // 两个空格分隔
+						}
+						std::cout << m;
+						first = false;
+					}
+					std::cout << std::endl;
+					// 重新显示提示符和原始输入
+					std::cout << "$ " << input;
+					std::cout.flush();
+					tabCount = 0; // 重置 tab 计数
+				}
 			}
 			else
 			{
-				// No match or multiple matches found, ring the bell
+				// 没有匹配：响铃
 				std::cout << '\x07';
 				std::cout.flush();
 			}
