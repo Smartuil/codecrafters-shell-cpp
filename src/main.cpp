@@ -100,6 +100,12 @@ std::string readLineWithCompletion()
 				std::cout << input;
 				std::cout.flush();
 			}
+			else
+			{
+				// No match found, ring the bell
+				std::cout << '\x07';
+				std::cout.flush();
+			}
 		}
 		else if (c == 127 || c == '\b')
 		{
