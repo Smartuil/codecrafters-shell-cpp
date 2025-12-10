@@ -42,6 +42,29 @@ void enableRawMode()
 	tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw); // 应用新设置
 }
 
+// 计算多个字符串的最长公共前缀
+std::string longestCommonPrefix(const std::set<std::string>& strings)
+{
+	if (strings.empty()) return "";
+	if (strings.size() == 1) return *strings.begin();
+	
+	// 取第一个字符串作为参考
+	const std::string& first = *strings.begin();
+	size_t prefixLen = first.length();
+	
+	for (const auto& s : strings)
+	{
+		size_t i = 0;
+		while (i < prefixLen && i < s.length() && first[i] == s[i])
+		{
+			i++;
+		}
+		prefixLen = i;
+	}
+	
+	return first.substr(0, prefixLen);
+}
+
 // Read a line with tab completion support
 std::string readLineWithCompletion()
 {
@@ -147,35 +170,55 @@ std::string readLineWithCompletion()
 				std::cout << input;
 				std::cout.flush();
 				tabCount = 0; // 重置 tab 计数
+				lastInput = input;
 			}
 			else if (matches.size() > 1)
 			{
-				// 多个匹配
-				if (tabCount == 1)
+				// 多个匹配：计算最长公共前缀
+				std::string lcp = longestCommonPrefix(matches);
+				
+				if (lcp.length() > input.length())
 				{
-					// 第一次按 Tab：响铃
-					std::cout << '\x07';
-					std::cout.flush();
-				}
-				else if (tabCount >= 2)
-				{
-					// 第二次按 Tab：显示所有匹配项
-					std::cout << std::endl;
-					bool first = true;
-					for (const auto& m : matches)
+					// 可以补全到更长的公共前缀
+					for (size_t i = 0; i < input.length(); i++)
 					{
-						if (!first)
-						{
-							std::cout << "  "; // 两个空格分隔
-						}
-						std::cout << m;
-						first = false;
+						std::cout << "\b \b";
 					}
-					std::cout << std::endl;
-					// 重新显示提示符和原始输入
-					std::cout << "$ " << input;
+					input = lcp;
+					std::cout << input;
 					std::cout.flush();
 					tabCount = 0; // 重置 tab 计数
+					lastInput = input;
+				}
+				else
+				{
+					// 无法进一步补全
+					if (tabCount == 1)
+					{
+						// 第一次按 Tab：响铃
+						std::cout << '\x07';
+						std::cout.flush();
+					}
+					else if (tabCount >= 2)
+					{
+						// 第二次按 Tab：显示所有匹配项
+						std::cout << std::endl;
+						bool first = true;
+						for (const auto& m : matches)
+						{
+							if (!first)
+							{
+								std::cout << "  "; // 两个空格分隔
+							}
+							std::cout << m;
+							first = false;
+						}
+						std::cout << std::endl;
+						// 重新显示提示符和原始输入
+						std::cout << "$ " << input;
+						std::cout.flush();
+						tabCount = 0; // 重置 tab 计数
+					}
 				}
 			}
 			else
