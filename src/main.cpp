@@ -63,26 +63,76 @@ std::string readLineWithCompletion()
 		else if (c == '\t')
 		{
 			// Tab completion
-			// Find matching builtin command
+			// Find matching builtin command or executable in PATH
 			std::string match;
+			int matchCount = 0;
+			
+			// First check builtin commands
 			for (const auto& cmd : BUILTIN_COMMANDS)
 			{
 				if (cmd.rfind(input, 0) == 0) // starts with input
 				{
-					if (match.empty())
+					if (match.empty() || cmd < match)
 					{
 						match = cmd;
 					}
-					else
-					{
-						// Multiple matches, don't complete
-						match.clear();
-						break;
-					}
+					matchCount++;
 				}
 			}
 			
-			if (!match.empty())
+			// Then check executables in PATH
+			char* pathEnv = std::getenv("PATH");
+			if (pathEnv != nullptr)
+			{
+				std::string pathStr(pathEnv);
+				size_t start = 0;
+				while (true)
+				{
+					size_t end = pathStr.find(':', start);
+					std::string dir = (end == std::string::npos)
+						? pathStr.substr(start)
+						: pathStr.substr(start, end - start);
+					
+					if (!dir.empty())
+					{
+						// Check if directory exists
+						if (std::filesystem::exists(dir) && std::filesystem::is_directory(dir))
+						{
+							try
+							{
+								for (const auto& entry : std::filesystem::directory_iterator(dir))
+								{
+									if (entry.is_regular_file())
+									{
+										std::string filename = entry.path().filename().string();
+										if (filename.rfind(input, 0) == 0) // starts with input
+										{
+											// Check if executable
+											if (access(entry.path().c_str(), X_OK) == 0)
+											{
+												if (match.empty() || filename < match)
+												{
+													match = filename;
+												}
+												matchCount++;
+											}
+										}
+									}
+								}
+							}
+							catch (...)
+							{
+								// Ignore errors when reading directory
+							}
+						}
+					}
+					
+					if (end == std::string::npos) break;
+					start = end + 1;
+				}
+			}
+			
+			if (matchCount == 1 && !match.empty())
 			{
 				// Clear current input and show completed command
 				// Move cursor back and clear
@@ -102,7 +152,7 @@ std::string readLineWithCompletion()
 			}
 			else
 			{
-				// No match found, ring the bell
+				// No match or multiple matches found, ring the bell
 				std::cout << '\x07';
 				std::cout.flush();
 			}
