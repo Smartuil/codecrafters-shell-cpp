@@ -8,6 +8,7 @@
 #include <unistd.h>    // fork(), execv(), access(), X_OK
 #include <sys/wait.h>  // waitpid()
 #include <fcntl.h>     // open() - 新增用于文件操作
+#include <termios.h>   // termios for raw mode
 
 #ifdef _WIN32
 #include <io.h>
@@ -16,6 +17,112 @@
 #else
 #include <unistd.h>
 #endif
+
+// Builtin commands for autocompletion
+const std::vector<std::string> BUILTIN_COMMANDS = {"echo", "exit", "type"};
+
+// Enable raw mode for terminal
+struct termios orig_termios;
+
+//ICANON (规范模式) - 默认情况下，终端会等用户按回车才把整行输入发给程序。关闭后，程序可以逐字符读取，包括 TAB 键
+//ECHO - 默认终端会自动显示用户输入。关闭后，我们需要手动控制显示，这样才能在补全时正确更新显示内容
+
+void disableRawMode()
+{
+	tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+}
+
+void enableRawMode()
+{
+	tcgetattr(STDIN_FILENO, &orig_termios);   // 保存当前终端设置
+	struct termios raw = orig_termios;        // 复制一份用于修改
+	raw.c_lflag &= ~(ICANON | ECHO);          // 关闭两个标志位
+	tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw); // 应用新设置
+}
+
+// Read a line with tab completion support
+std::string readLineWithCompletion()
+{
+	enableRawMode();
+	std::string input;
+	
+	while (true)
+	{
+		char c;
+		if (read(STDIN_FILENO, &c, 1) != 1)//从标准输入读取 1 个字节到变量 c
+		{
+			disableRawMode();
+			return input;
+		}
+		
+		if (c == '\n' || c == '\r')
+		{
+			std::cout << std::endl;
+			break;
+		}
+		else if (c == '\t')
+		{
+			// Tab completion
+			// Find matching builtin command
+			std::string match;
+			for (const auto& cmd : BUILTIN_COMMANDS)
+			{
+				if (cmd.rfind(input, 0) == 0) // starts with input
+				{
+					if (match.empty())
+					{
+						match = cmd;
+					}
+					else
+					{
+						// Multiple matches, don't complete
+						match.clear();
+						break;
+					}
+				}
+			}
+			
+			if (!match.empty())
+			{
+				// Clear current input and show completed command
+				// Move cursor back and clear
+				for (size_t i = 0; i < input.length(); i++)
+				{
+					// 假设屏幕显示 ech ，光标在 h 后面：
+
+					// ech|        # | 表示光标位置
+					// ec|h        # 第一个 \b：光标左移
+					// ec |        # 空格：覆盖 h
+					// ec|         # 第二个 \b：光标回到正确位置
+					std::cout << "\b \b";
+				}
+				input = match + " ";
+				std::cout << input;
+				std::cout.flush();
+			}
+		}
+		else if (c == 127 || c == '\b')
+		{
+			// Backspace
+			if (!input.empty())
+			{
+				input.pop_back();
+				std::cout << "\b \b";
+				std::cout.flush();
+			}
+		}
+		else if (c >= 32)
+		{
+			// Regular character
+			input += c;
+			std::cout << c;
+			std::cout.flush();
+		}
+	}
+	
+	disableRawMode();
+	return input;
+}
 
 struct ArgToken
 {
@@ -375,10 +482,9 @@ int main()
 	while (true)
 	{
 		std::cout << "$ ";
-		std::string command;
-		std::getline(std::cin, command);
+		std::string command = readLineWithCompletion();
 
-		if (command == "exit") break;
+		if (command == "exit" || command == "exit ") break;
 
 		CommandInfo cmdInfo = parseCommand(command);
 
