@@ -700,6 +700,76 @@ std::string findExecutable(const std::string& cmd)
 	return "";
 }
 
+// 检查是否是内置命令
+bool isBuiltinCommand(const std::string& cmd)
+{
+	return cmd == "echo" || cmd == "exit" || cmd == "type" || cmd == "cd" || cmd == "pwd";
+}
+
+// 在子进程中执行内置命令（用于管道）
+void executeBuiltinInPipeline(const CommandInfo& cmdInfo)
+{
+	const std::string& cmd = cmdInfo.args[0].value;
+
+	if (cmd == "echo")
+	{
+		for (size_t i = 1; i < cmdInfo.args.size(); ++i)
+		{
+			if (i > 1)
+			{
+				std::cout << " ";
+			}
+
+			std::string outputText;
+			if (cmdInfo.args[i].singleQuoted)
+			{
+				outputText = cmdInfo.args[i].value;
+			}
+			else
+			{
+				outputText = decodeEchoEscapes(cmdInfo.args[i].value);
+			}
+			std::cout << outputText;
+		}
+		std::cout << std::endl;
+	}
+	else if (cmd == "type")
+	{
+		if (cmdInfo.args.size() < 2)
+		{
+			std::cout << "type: missing argument" << std::endl;
+			return;
+		}
+
+		std::string target = cmdInfo.args[1].value;
+
+		if (target == "echo" || target == "exit" || target == "type" || target == "cd" || target == "pwd")
+		{
+			std::cout << target << " is a shell builtin" << std::endl;
+			return;
+		}
+
+		std::string execPath = findExecutable(target);
+		if (!execPath.empty())
+		{
+			std::cout << target << " is " << execPath << std::endl;
+		}
+		else
+		{
+			std::cout << target << ": not found" << std::endl;
+		}
+	}
+	else if (cmd == "pwd")
+	{
+		char cwd[4096];
+		if (getcwd(cwd, sizeof(cwd)) != nullptr)
+		{
+			std::cout << cwd << std::endl;
+		}
+	}
+	// exit 和 cd 在管道中不太有意义，但可以简单处理
+}
+
 // 执行管道命令
 void executePipeline(const std::vector<std::string>& pipeCommands)
 {
@@ -723,11 +793,18 @@ void executePipeline(const std::vector<std::string>& pipeCommands)
 		CommandInfo cmdInfo = parseCommand(pipeCommands[i]);
 		if (cmdInfo.args.empty()) continue;
 
-		std::string execPath = findExecutable(cmdInfo.args[0].value);
-		if (execPath.empty())
+		std::string cmdName = cmdInfo.args[0].value;
+		bool isBuiltin = isBuiltinCommand(cmdName);
+		std::string execPath;
+		
+		if (!isBuiltin)
 		{
-			std::cerr << cmdInfo.args[0].value << ": command not found" << std::endl;
-			continue;
+			execPath = findExecutable(cmdName);
+			if (execPath.empty())
+			{
+				std::cerr << cmdName << ": command not found" << std::endl;
+				continue;
+			}
 		}
 
 		pid_t pid = fork();
@@ -809,16 +886,25 @@ void executePipeline(const std::vector<std::string>& pipeCommands)
 				close(pipeFds[j]);
 			}
 
-			// 构建参数数组
-			std::vector<char*> args;
-			for (const auto& arg : cmdInfo.args)
+			if (isBuiltin)
 			{
-				args.push_back(strdup(arg.value.c_str()));
+				// 执行内置命令
+				executeBuiltinInPipeline(cmdInfo);
+				exit(0);
 			}
-			args.push_back(nullptr);
+			else
+			{
+				// 构建参数数组
+				std::vector<char*> args;
+				for (const auto& arg : cmdInfo.args)
+				{
+					args.push_back(strdup(arg.value.c_str()));
+				}
+				args.push_back(nullptr);
 
-			execv(execPath.c_str(), args.data());
-			exit(1); // execv 失败才会执行到这里
+				execv(execPath.c_str(), args.data());
+				exit(1); // execv 失败才会执行到这里
+			}
 		}
 		else if (pid > 0)
 		{
