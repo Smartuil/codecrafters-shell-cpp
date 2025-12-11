@@ -601,6 +601,244 @@ CommandInfo parseCommand(const std::string& command)
 	return cmdInfo;
 }
 
+// 按管道符分割命令行
+std::vector<std::string> splitByPipe(const std::string& command)
+{
+	std::vector<std::string> commands;
+	std::string current;
+	bool inSingleQuotes = false;
+	bool inDoubleQuotes = false;
+	bool escapeNext = false;
+
+	for (size_t i = 0; i < command.length(); ++i)
+	{
+		char c = command[i];
+
+		if (escapeNext)
+		{
+			current += c;
+			escapeNext = false;
+			continue;
+		}
+
+		if (c == '\\' && !inSingleQuotes)
+		{
+			current += c;
+			escapeNext = true;
+			continue;
+		}
+
+		if (c == '\'' && !inDoubleQuotes)
+		{
+			inSingleQuotes = !inSingleQuotes;
+			current += c;
+			continue;
+		}
+
+		if (c == '"' && !inSingleQuotes)
+		{
+			inDoubleQuotes = !inDoubleQuotes;
+			current += c;
+			continue;
+		}
+
+		if (c == '|' && !inSingleQuotes && !inDoubleQuotes)
+		{
+			// 去除前后空格
+			size_t start = current.find_first_not_of(" \t");
+			size_t end = current.find_last_not_of(" \t");
+			if (start != std::string::npos)
+			{
+				commands.push_back(current.substr(start, end - start + 1));
+			}
+			current.clear();
+			continue;
+		}
+
+		current += c;
+	}
+
+	// 添加最后一个命令
+	size_t start = current.find_first_not_of(" \t");
+	size_t end = current.find_last_not_of(" \t");
+	if (start != std::string::npos)
+	{
+		commands.push_back(current.substr(start, end - start + 1));
+	}
+
+	return commands;
+}
+
+// 在PATH中查找可执行文件
+std::string findExecutable(const std::string& cmd)
+{
+	char* pathEnv = std::getenv("PATH");
+	if (pathEnv == nullptr) return "";
+
+	std::string path(pathEnv);
+	size_t start = 0;
+	while (true)
+	{
+		size_t end = path.find(':', start);
+		std::string dir = (end == std::string::npos)
+			? path.substr(start)
+			: path.substr(start, end - start);
+
+		if (!dir.empty())
+		{
+			std::string fullPath = dir + "/" + cmd;
+			if (access(fullPath.c_str(), X_OK) == 0)
+			{
+				return fullPath;
+			}
+		}
+
+		if (end == std::string::npos) break;
+		start = end + 1;
+	}
+
+	return "";
+}
+
+// 执行管道命令
+void executePipeline(const std::vector<std::string>& pipeCommands)
+{
+	int numCmds = pipeCommands.size();
+	std::vector<int> pipeFds((numCmds - 1) * 2);
+
+	// 创建所有管道
+	for (int i = 0; i < numCmds - 1; ++i)
+	{
+		if (pipe(&pipeFds[i * 2]) == -1)
+		{
+			std::cerr << "pipe failed" << std::endl;
+			return;
+		}
+	}
+
+	std::vector<pid_t> pids;
+
+	for (int i = 0; i < numCmds; ++i)
+	{
+		CommandInfo cmdInfo = parseCommand(pipeCommands[i]);
+		if (cmdInfo.args.empty()) continue;
+
+		std::string execPath = findExecutable(cmdInfo.args[0].value);
+		if (execPath.empty())
+		{
+			std::cerr << cmdInfo.args[0].value << ": command not found" << std::endl;
+			continue;
+		}
+
+		pid_t pid = fork();
+		if (pid == 0)
+		{
+			// 管道执行流程详解：
+
+			// 假设执行 "cmd0 | cmd1 | cmd2"（3个命令，2个管道）
+
+			// 管道数组结构：
+			// pipeFds[0] = 管道0读端    pipeFds[1] = 管道0写端
+			// pipeFds[2] = 管道1读端    pipeFds[3] = 管道1写端
+
+			// 数据流向：
+			// cmd0 ---> 管道0 ---> cmd1 ---> 管道1 ---> cmd2
+			// 	写端[1]    读端[0]  写端[3]    读端[2]
+
+			// 各命令的重定向：
+			// cmd0 (i=0): stdin=终端,        stdout=pipeFds[1] (管道0写端)
+			// cmd1 (i=1): stdin=pipeFds[0],  stdout=pipeFds[3] (管道1写端)
+			// cmd2 (i=2): stdin=pipeFds[2],  stdout=终端
+
+			// 索引计算公式：
+			// 读取前一个管道: pipeFds[(i-1)*2]   -> 读端
+			// 写入当前管道:   pipeFds[i*2+1]     -> 写端
+
+			// fork() 返回值：
+			// 子进程中返回 0
+			// 父进程中返回子进程PID
+			// 失败返回 -1
+
+			// dup2(oldFd, newFd) 作用：
+			// 将 newFd 重定向到 oldFd，之后对 newFd 的操作实际作用于 oldFd
+
+			// 为什么要关闭所有管道文件描述符：
+			// 1. dup2 已复制了需要的描述符
+			// 2. 不关闭写端会导致读端无法检测 EOF
+			// 3. 避免文件描述符泄漏
+
+			// execv 说明：
+			// 用新程序替换当前进程，成功则不返回
+			// 参数数组必须以 nullptr 结尾
+
+			// 图解示例： cat file | wc
+			// 命令0: cat file          命令1: wc
+			// 	i=0                     i=1
+
+			// [stdin]                 pipeFds[0] ──→ [stdin]
+			// 	↓                         ↑              ↓
+			// cat                      管道0            wc
+			// 	↓                         ↑              ↓
+			// [stdout] ──→ pipeFds[1] ────┘          [stdout]
+			// cat (i=0)：
+
+			// 不重定向 stdin（i=0，跳过）
+			// stdout → pipeFds[1]（管道0写端）
+			// wc (i=1)：
+
+			// stdin ← pipeFds[0]（管道0读端）
+			// 不重定向 stdout（i=1 是最后一个，跳过）
+
+			// 子进程
+
+			// 如果不是第一个命令，从前一个管道读取
+			if (i > 0)
+			{
+				dup2(pipeFds[(i - 1) * 2], STDIN_FILENO);
+			}
+
+			// 如果不是最后一个命令，写入到下一个管道
+			if (i < numCmds - 1)
+			{
+				dup2(pipeFds[i * 2 + 1], STDOUT_FILENO);
+			}
+
+			// 关闭所有管道文件描述符
+			for (size_t j = 0; j < pipeFds.size(); ++j)
+			{
+				close(pipeFds[j]);
+			}
+
+			// 构建参数数组
+			std::vector<char*> args;
+			for (const auto& arg : cmdInfo.args)
+			{
+				args.push_back(strdup(arg.value.c_str()));
+			}
+			args.push_back(nullptr);
+
+			execv(execPath.c_str(), args.data());
+			exit(1); // execv 失败才会执行到这里
+		}
+		else if (pid > 0)
+		{
+			pids.push_back(pid);
+		}
+	}
+
+	// 父进程关闭所有管道
+	for (size_t i = 0; i < pipeFds.size(); ++i)
+	{
+		close(pipeFds[i]);
+	}
+
+	// 等待所有子进程
+	for (pid_t pid : pids)
+	{
+		waitpid(pid, nullptr, 0);
+	}
+}
+
 int main()
 {
 	std::cout << std::unitbuf;
@@ -612,6 +850,15 @@ int main()
 		std::string command = readLineWithCompletion();
 
 		if (command == "exit" || command == "exit ") break;
+
+		// 检查是否包含管道
+		std::vector<std::string> pipeCommands = splitByPipe(command);
+		if (pipeCommands.size() > 1)
+		{
+			// 执行管道命令
+			executePipeline(pipeCommands);
+			continue;
+		}
 
 		CommandInfo cmdInfo = parseCommand(command);
 
