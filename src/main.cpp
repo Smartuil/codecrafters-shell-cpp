@@ -1094,9 +1094,10 @@ int main()
 
 	// 从 HISTFILE 环境变量加载历史记录
 	char* histFileEnv = std::getenv("HISTFILE");
+	std::string histFilePath;
 	if (histFileEnv != nullptr)
 	{
-		std::string histFilePath(histFileEnv);
+		histFilePath = histFileEnv;
 		std::ifstream histFile(histFilePath);
 		if (histFile.is_open())
 		{
@@ -1120,7 +1121,34 @@ int main()
 		std::cout << "$ ";
 		std::string command = readLineWithCompletion();
 
-		if (command == "exit" || command == "exit ") break;
+		if (command == "exit" || command == "exit ")
+		{
+			// 将 exit 命令也添加到历史记录
+			std::string trimmedCmd = command;
+			while (!trimmedCmd.empty() && (trimmedCmd.back() == ' ' || trimmedCmd.back() == '\t'))
+			{
+				trimmedCmd.pop_back();
+			}
+			if (!trimmedCmd.empty())
+			{
+				commandHistory.push_back(trimmedCmd);
+			}
+			
+			// 退出时将历史记录写入 HISTFILE
+			if (!histFilePath.empty())
+			{
+				std::ofstream histFile(histFilePath);
+				if (histFile.is_open())
+				{
+					for (const auto& cmd : commandHistory)
+					{
+						histFile << cmd << "\n";
+					}
+					histFile.close();
+				}
+			}
+			break;
+		}
 
 		// 添加到历史记录（去除尾部空格）
 		std::string trimmedCmd = command;
