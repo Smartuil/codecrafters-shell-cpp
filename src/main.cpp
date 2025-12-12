@@ -11,6 +11,7 @@
 #include <termios.h>   // termios for raw mode
 #include <algorithm>   // sort
 #include <set>         // set for unique sorted matches
+#include <fstream>     // ifstream for reading history file
 
 #ifdef _WIN32
 #include <io.h>
@@ -845,6 +846,27 @@ void executeBuiltinInPipeline(const CommandInfo& cmdInfo)
 	}
 	else if (cmd == "history")
 	{
+		// 检查是否是 history -r <file> 命令
+		if (cmdInfo.args.size() >= 3 && cmdInfo.args[1].value == "-r")
+		{
+			std::string filePath = cmdInfo.args[2].value;
+			std::ifstream histFile(filePath);
+			if (histFile.is_open())
+			{
+				std::string line;
+				while (std::getline(histFile, line))
+				{
+					// 跳过空行
+					if (!line.empty())
+					{
+						commandHistory.push_back(line);
+					}
+				}
+				histFile.close();
+			}
+			return;
+		}
+		
 		size_t start = 0;
 		size_t count = commandHistory.size();
 		
@@ -1070,6 +1092,27 @@ int main()
 		// 处理history命令
 		if (cmdInfo.args[0].value == "history")
 		{
+			// 检查是否是 history -r <file> 命令
+			if (cmdInfo.args.size() >= 3 && cmdInfo.args[1].value == "-r")
+			{
+				std::string filePath = cmdInfo.args[2].value;
+				std::ifstream histFile(filePath);
+				if (histFile.is_open())
+				{
+					std::string line;
+					while (std::getline(histFile, line))
+					{
+						// 跳过空行
+						if (!line.empty())
+						{
+							commandHistory.push_back(line);
+						}
+					}
+					histFile.close();
+				}
+				continue;
+			}
+			
 			size_t start = 0;
 			size_t count = commandHistory.size();
 			
