@@ -26,6 +26,8 @@ const std::vector<std::string> BUILTIN_COMMANDS = {"echo", "exit", "type", "hist
 
 // 命令历史记录
 std::vector<std::string> commandHistory;
+// 记录上次 history -a 追加到文件的位置
+size_t lastAppendedIndex = 0;
 
 // Enable raw mode for terminal
 struct termios orig_termios;
@@ -883,6 +885,25 @@ void executeBuiltinInPipeline(const CommandInfo& cmdInfo)
 			return;
 		}
 		
+		// 检查是否是 history -a <file> 命令（追加新命令到文件）
+		if (cmdInfo.args.size() >= 3 && cmdInfo.args[1].value == "-a")
+		{
+			std::string filePath = cmdInfo.args[2].value;
+			std::ofstream histFile(filePath, std::ios::app); // 追加模式
+			if (histFile.is_open())
+			{
+				// 只追加自上次 history -a 以来的新命令
+				for (size_t i = lastAppendedIndex; i < commandHistory.size(); ++i)
+				{
+					histFile << commandHistory[i] << "\n";
+				}
+				histFile.close();
+				// 更新追加位置
+				lastAppendedIndex = commandHistory.size();
+			}
+			return;
+		}
+		
 		size_t start = 0;
 		size_t count = commandHistory.size();
 		
@@ -1141,6 +1162,25 @@ int main()
 						histFile << cmd << "\n";
 					}
 					histFile.close();
+				}
+				continue;
+			}
+			
+			// 检查是否是 history -a <file> 命令（追加新命令到文件）
+			if (cmdInfo.args.size() >= 3 && cmdInfo.args[1].value == "-a")
+			{
+				std::string filePath = cmdInfo.args[2].value;
+				std::ofstream histFile(filePath, std::ios::app); // 追加模式
+				if (histFile.is_open())
+				{
+					// 只追加自上次 history -a 以来的新命令
+					for (size_t i = lastAppendedIndex; i < commandHistory.size(); ++i)
+					{
+						histFile << commandHistory[i] << "\n";
+					}
+					histFile.close();
+					// 更新追加位置
+					lastAppendedIndex = commandHistory.size();
 				}
 				continue;
 			}
