@@ -1092,6 +1092,29 @@ int main()
 	std::cout << std::unitbuf;
 	std::cerr << std::unitbuf;
 
+	// 从 HISTFILE 环境变量加载历史记录
+	char* histFileEnv = std::getenv("HISTFILE");
+	if (histFileEnv != nullptr)
+	{
+		std::string histFilePath(histFileEnv);
+		std::ifstream histFile(histFilePath);
+		if (histFile.is_open())
+		{
+			std::string line;
+			while (std::getline(histFile, line))
+			{
+				// 跳过空行
+				if (!line.empty())
+				{
+					commandHistory.push_back(line);
+				}
+			}
+			histFile.close();
+		}
+		// 设置 lastAppendedIndex 为已加载的历史记录数量
+		lastAppendedIndex = commandHistory.size();
+	}
+
 	while (true)
 	{
 		std::cout << "$ ";
