@@ -68,13 +68,15 @@ std::string longestCommonPrefix(const std::set<std::string>& strings)
 	return first.substr(0, prefixLen);
 }
 
-// Read a line with tab completion support
+// Read a line with tab completion and history support
 std::string readLineWithCompletion()
 {
 	enableRawMode();
 	std::string input;
 	int tabCount = 0;        // 跟踪连续按 Tab 的次数
 	std::string lastInput;   // 记录上次按 Tab 时的输入
+	int historyIndex = commandHistory.size(); // 历史记录索引，初始指向末尾（新命令位置）
+	std::string savedInput;  // 保存用户正在输入的内容
 	
 	while (true)
 	{
@@ -89,6 +91,77 @@ std::string readLineWithCompletion()
 		{
 			std::cout << std::endl;
 			break;
+		}
+		// \x1b 是 ESC 字符（ASCII 码 27，十六进制 0x1B）。
+
+		// 终端中的作用
+		// 当用户按下方向键时，终端不会发送单个字符，而是发送一个 ESC 序列：
+
+		// 按键		    发送的序列		 字符表示
+		// 上箭头		ESC [ A			\x1b[A
+		// 下箭头		ESC [ B			\x1b[B
+		// 右箭头		ESC [ C			\x1b[C
+		// 左箭头		ESC [ D			\x1b[D
+		else if (c == '\x1b') // ESC 序列开始
+		{
+			// 读取后续字符
+			char seq[2];
+			if (read(STDIN_FILENO, &seq[0], 1) != 1) continue;
+			if (read(STDIN_FILENO, &seq[1], 1) != 1) continue;
+			
+			if (seq[0] == '[')
+			{
+				if (seq[1] == 'A') // 上箭头
+				{
+					if (!commandHistory.empty() && historyIndex > 0)
+					{
+						// 如果是第一次按上箭头，保存当前输入
+						if (historyIndex == (int)commandHistory.size())
+						{
+							savedInput = input;
+						}
+						
+						historyIndex--;
+						
+						// 清除当前行
+						for (size_t i = 0; i < input.length(); i++)
+						{
+							std::cout << "\b \b";
+						}
+						
+						// 显示历史命令
+						input = commandHistory[historyIndex];
+						std::cout << input;
+						std::cout.flush();
+					}
+				}
+				else if (seq[1] == 'B') // 下箭头
+				{
+					if (historyIndex < (int)commandHistory.size())
+					{
+						historyIndex++;
+						
+						// 清除当前行
+						for (size_t i = 0; i < input.length(); i++)
+						{
+							std::cout << "\b \b";
+						}
+						
+						if (historyIndex == (int)commandHistory.size())
+						{
+							// 恢复用户原来的输入
+							input = savedInput;
+						}
+						else
+						{
+							input = commandHistory[historyIndex];
+						}
+						std::cout << input;
+						std::cout.flush();
+					}
+				}
+			}
+			continue;
 		}
 		else if (c == '\t')
 		{
