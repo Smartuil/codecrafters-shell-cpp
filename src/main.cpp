@@ -22,7 +22,7 @@
 #endif
 
 // Builtin commands for autocompletion
-const std::vector<std::string> BUILTIN_COMMANDS = {"echo", "exit", "type", "history"};
+const std::vector<std::string> BUILTIN_COMMANDS = {"echo", "exit", "type", "history", "pwd", "cd"};
 
 // 命令历史记录
 std::vector<std::string> commandHistory;
@@ -1263,6 +1263,45 @@ int main()
 			continue;
 		}
 
+		// 处理pwd命令
+		if (cmdInfo.args[0].value == "pwd")
+		{
+			char cwd[4096];
+			if (getcwd(cwd, sizeof(cwd)) != nullptr)
+			{
+				std::cout << cwd << std::endl;
+			}
+			continue;
+		}
+
+		// 处理cd命令
+		if (cmdInfo.args[0].value == "cd")
+		{
+			std::string targetDir;
+			if (cmdInfo.args.size() < 2 || cmdInfo.args[1].value == "~")
+			{
+				// cd 或 cd ~ 跳转到 HOME 目录
+				char* home = std::getenv("HOME");
+				if (home != nullptr)
+				{
+					targetDir = home;
+				}
+			}
+			else
+			{
+				targetDir = cmdInfo.args[1].value;
+			}
+
+			if (!targetDir.empty())
+			{
+				if (chdir(targetDir.c_str()) != 0)
+				{
+					std::cerr << "cd: " << targetDir << ": No such file or directory" << std::endl;
+				}
+			}
+			continue;
+		}
+
 		// 处理echo命令
 		if (cmdInfo.args[0].value == "echo")
 		{
@@ -1355,7 +1394,7 @@ int main()
 
 			std::string target = cmdInfo.args[1].value;
 
-			if (target == "echo" || target == "exit" || target == "type" || target == "history")
+			if (target == "echo" || target == "exit" || target == "type" || target == "history" || target == "pwd" || target == "cd")
 			{
 				std::cout << target << " is a shell builtin" << std::endl;
 				continue;
