@@ -21,7 +21,10 @@
 #endif
 
 // Builtin commands for autocompletion
-const std::vector<std::string> BUILTIN_COMMANDS = {"echo", "exit", "type"};
+const std::vector<std::string> BUILTIN_COMMANDS = {"echo", "exit", "type", "history"};
+
+// 命令历史记录
+std::vector<std::string> commandHistory;
 
 // Enable raw mode for terminal
 struct termios orig_termios;
@@ -703,7 +706,7 @@ std::string findExecutable(const std::string& cmd)
 // 检查是否是内置命令
 bool isBuiltinCommand(const std::string& cmd)
 {
-	return cmd == "echo" || cmd == "exit" || cmd == "type" || cmd == "cd" || cmd == "pwd";
+	return cmd == "echo" || cmd == "exit" || cmd == "type" || cmd == "cd" || cmd == "pwd" || cmd == "history";
 }
 
 // 在子进程中执行内置命令（用于管道）
@@ -765,6 +768,13 @@ void executeBuiltinInPipeline(const CommandInfo& cmdInfo)
 		if (getcwd(cwd, sizeof(cwd)) != nullptr)
 		{
 			std::cout << cwd << std::endl;
+		}
+	}
+	else if (cmd == "history")
+	{
+		for (size_t i = 0; i < commandHistory.size(); ++i)
+		{
+			std::cout << "    " << (i + 1) << "  " << commandHistory[i] << std::endl;
 		}
 	}
 	// exit 和 cd 在管道中不太有意义，但可以简单处理
@@ -937,6 +947,17 @@ int main()
 
 		if (command == "exit" || command == "exit ") break;
 
+		// 添加到历史记录（去除尾部空格）
+		std::string trimmedCmd = command;
+		while (!trimmedCmd.empty() && (trimmedCmd.back() == ' ' || trimmedCmd.back() == '\t'))
+		{
+			trimmedCmd.pop_back();
+		}
+		if (!trimmedCmd.empty())
+		{
+			commandHistory.push_back(trimmedCmd);
+		}
+
 		// 检查是否包含管道
 		std::vector<std::string> pipeCommands = splitByPipe(command);
 		if (pipeCommands.size() > 1)
@@ -950,6 +971,16 @@ int main()
 
 		if (cmdInfo.args.empty())
 		{
+			continue;
+		}
+
+		// 处理history命令
+		if (cmdInfo.args[0].value == "history")
+		{
+			for (size_t i = 0; i < commandHistory.size(); ++i)
+			{
+				std::cout << "    " << (i + 1) << "  " << commandHistory[i] << std::endl;
+			}
 			continue;
 		}
 
@@ -1045,7 +1076,7 @@ int main()
 
 			std::string target = cmdInfo.args[1].value;
 
-			if (target == "echo" || target == "exit" || target == "type")
+			if (target == "echo" || target == "exit" || target == "type" || target == "history")
 			{
 				std::cout << target << " is a shell builtin" << std::endl;
 				continue;
