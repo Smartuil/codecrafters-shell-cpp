@@ -867,6 +867,22 @@ void executeBuiltinInPipeline(const CommandInfo& cmdInfo)
 			return;
 		}
 		
+		// 检查是否是 history -w <file> 命令
+		if (cmdInfo.args.size() >= 3 && cmdInfo.args[1].value == "-w")
+		{
+			std::string filePath = cmdInfo.args[2].value;
+			std::ofstream histFile(filePath);
+			if (histFile.is_open())
+			{
+				for (const auto& cmd : commandHistory)
+				{
+					histFile << cmd << "\n";
+				}
+				histFile.close();
+			}
+			return;
+		}
+		
 		size_t start = 0;
 		size_t count = commandHistory.size();
 		
@@ -1107,6 +1123,22 @@ int main()
 						{
 							commandHistory.push_back(line);
 						}
+					}
+					histFile.close();
+				}
+				continue;
+			}
+			
+			// 检查是否是 history -w <file> 命令
+			if (cmdInfo.args.size() >= 3 && cmdInfo.args[1].value == "-w")
+			{
+				std::string filePath = cmdInfo.args[2].value;
+				std::ofstream histFile(filePath);
+				if (histFile.is_open())
+				{
+					for (const auto& cmd : commandHistory)
+					{
+						histFile << cmd << "\n";
 					}
 					histFile.close();
 				}
