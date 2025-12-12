@@ -772,7 +772,27 @@ void executeBuiltinInPipeline(const CommandInfo& cmdInfo)
 	}
 	else if (cmd == "history")
 	{
-		for (size_t i = 0; i < commandHistory.size(); ++i)
+		size_t start = 0;
+		size_t count = commandHistory.size();
+		
+		// 检查是否有参数限制显示数量
+		if (cmdInfo.args.size() >= 2)
+		{
+			try
+			{
+				int n = std::stoi(cmdInfo.args[1].value);
+				if (n > 0 && static_cast<size_t>(n) < commandHistory.size())
+				{
+					start = commandHistory.size() - n;
+				}
+			}
+			catch (...)
+			{
+				// 无效参数，显示全部
+			}
+		}
+		
+		for (size_t i = start; i < count; ++i)
 		{
 			std::cout << "    " << (i + 1) << "  " << commandHistory[i] << std::endl;
 		}
@@ -977,7 +997,27 @@ int main()
 		// 处理history命令
 		if (cmdInfo.args[0].value == "history")
 		{
-			for (size_t i = 0; i < commandHistory.size(); ++i)
+			size_t start = 0;
+			size_t count = commandHistory.size();
+			
+			// 检查是否有参数限制显示数量
+			if (cmdInfo.args.size() >= 2)
+			{
+				try
+				{
+					int n = std::stoi(cmdInfo.args[1].value);
+					if (n > 0 && static_cast<size_t>(n) < commandHistory.size())
+					{
+						start = commandHistory.size() - n;
+					}
+				}
+				catch (...)
+				{
+					// 无效参数，显示全部
+				}
+			}
+			
+			for (size_t i = start; i < count; ++i)
 			{
 				std::cout << "    " << (i + 1) << "  " << commandHistory[i] << std::endl;
 			}
